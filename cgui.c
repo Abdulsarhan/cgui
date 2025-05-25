@@ -11,6 +11,9 @@
 // user will see and/or will be interacting with (buttons, text, textboxes,etc...)
 // I will need to hook up opengl to this in order for me to see the actual ui.
 
+#define true 1
+#define false 0
+
 typedef enum button_flags {
     is_hovering = 1,
     is_blank = 2,
@@ -59,21 +62,29 @@ void fatal(const char* string) {
     printf("%s", string);
 }
 
-int main() {
-    // 1. Connect to X11 and get the XCB connection
-    Display *display = XOpenDisplay(NULL);
-    if (!display) fatal("Failed to open X display");
+typedef struct pal_window {
+Display *display;
+xcb_connection_t *xcb_conn;
+xcb_window_t window;
+GLXContext ctx;
+}pal_window;
 
-    xcb_connection_t *xcb_conn = XGetXCBConnection(display);
-    int default_screen = DefaultScreen(display);
+pal_window platform_create_window() {
+    pal_window window = {0};
+    // 1. Connect to X11 and get the XCB connection
+    window.display = XOpenDisplay(NULL);
+    if (!window.display) fatal("Failed to open X display");
+
+    window.xcb_conn = XGetXCBConnection(window.display);
+    int default_screen = DefaultScreen(window.display);
 
     // 2. Get XCB screen
-    const xcb_setup_t *setup = xcb_get_setup(xcb_conn);
+    const xcb_setup_t *setup = xcb_get_setup(window.xcb_conn);
     xcb_screen_iterator_t iter = xcb_setup_roots_iterator(setup);
     for (int i = 0; i < default_screen; ++i) xcb_screen_next(&iter);
     xcb_screen_t *screen = iter.data;
     // 3. Create XCB window
-    xcb_window_t window = xcb_generate_id(xcb_conn);
+    window.window = xcb_generate_id(window.xcb_conn);
     uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
     uint32_t values[] = {
         screen->black_pixel,
@@ -81,9 +92,9 @@ int main() {
     };
 
     xcb_create_window(
-        xcb_conn,
+        window.xcb_conn,
         XCB_COPY_FROM_PARENT,
-        window,
+        window.window,
         screen->root,
         0, 0, 800, 600,
         0,
@@ -92,46 +103,58 @@ int main() {
         mask, values
     );
 
-    xcb_map_window(xcb_conn, window);
-    xcb_flush(xcb_conn);
+    xcb_map_window(window.xcb_conn, window.window);
+    xcb_flush(window.xcb_conn);
     XVisualInfo vinfo_template;
     int nitems;
     vinfo_template.screen = default_screen;
-    XVisualInfo* vinfo = XGetVisualInfo(display, mask, &vinfo_template, &nitems);
+    XVisualInfo* vinfo = XGetVisualInfo(window.display, mask, &vinfo_template, &nitems);
     // 4. Create OpenGL context using GLX
-    GLXContext ctx = glXCreateContext(
-        display,
+    window.ctx = glXCreateContext(
+        window.display,
         vinfo,
         NULL,
         GL_TRUE
     );
-    if (!ctx) fatal("Failed to create GLX context");
+    if (!window.ctx) fatal("Failed to create GLX context");
 
     // 5. Create X11 window from XCB window
-    glXMakeCurrent(display, window, ctx);
+    return window;
+}
 
-    // 6. Render loop
-    for (;;) {
+void platform_makecurrent(pal_window window) {
+    glXMakeCurrent(window.display, window.window, window.ctx);
+}
+
+void platform_swapbuffers(pal_window window) {
+    glXSwapBuffers(window.display, window.window);
+}
+
+int main() {
+    pal_window window = platform_create_window();
+
+    platform_makecurrent(window);
+    uint8_t running = true;
+    while (running) {
         xcb_generic_event_t *event;
-        while ((event = xcb_poll_for_event(xcb_conn))) {
+        while ((event = xcb_poll_for_event(window.xcb_conn))) {
             switch (event->response_type & ~0x80) {
                 case XCB_KEY_PRESS:
-                    free(event);
-                    goto exit_loop;
+                    running = false;
             }
             free(event);
         }
 
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-        glXSwapBuffers(display, window);
+        platform_swapbuffers(window);
     }
 
-exit_loop:
-    glXMakeCurrent(display, None, NULL);
-    glXDestroyContext(display, ctx);
-    xcb_destroy_window(xcb_conn, window);
-    xcb_disconnect(xcb_conn);
-    XCloseDisplay(display);
+    /* None of this shit really matters, the OS can deal with this. */
+    glXMakeCurrent(window.display, None, NULL);
+    glXDestroyContext(window.display, window.ctx);
+    xcb_destroy_window(window.xcb_conn, window.window);
+    xcb_disconnect(window.xcb_conn);
+    XCloseDisplay(window.display);
     return 0;
 }
