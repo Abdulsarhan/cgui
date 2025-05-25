@@ -63,10 +63,11 @@ void fatal(const char* string) {
 }
 
 typedef struct pal_window {
-Display *display;
-xcb_connection_t *xcb_conn;
-xcb_window_t window;
-GLXContext ctx;
+    Display *display;
+    xcb_connection_t *xcb_conn;
+    xcb_window_t window;
+    GLXContext ctx;
+    uint8_t window_should_close;
 }pal_window;
 
 pal_window platform_create_window() {
@@ -130,31 +131,54 @@ void platform_swapbuffers(pal_window window) {
     glXSwapBuffers(window.display, window.window);
 }
 
+void make_context_current(pal_window window) {
+     platform_makecurrent(window);
+}
+
+void swap_buffers(pal_window window) {
+    platform_swapbuffers(window);
+}
+
+uint8_t pal_window_should_close(pal_window window) {
+    return window.window_should_close;
+}
+
+void platform_poll_events(pal_window window) {
+    xcb_generic_event_t *event;
+    while ((event = xcb_poll_for_event(window.xcb_conn))) {
+        switch (event->response_type & ~0x80) {
+            case XCB_KEY_PRESS:
+                free(event);
+                window.window_should_close = true;
+        }
+    }
+}
+
+void pal_poll_events(pal_window window) {
+    platform_poll_events(window);
+}
+
 int main() {
     pal_window window = platform_create_window();
 
-    platform_makecurrent(window);
-    uint8_t running = true;
-    while (running) {
-        xcb_generic_event_t *event;
-        while ((event = xcb_poll_for_event(window.xcb_conn))) {
-            switch (event->response_type & ~0x80) {
-                case XCB_KEY_PRESS:
-                    running = false;
-            }
-            free(event);
-        }
+    make_context_current(window);
+    
+    while (!pal_window_should_close(window)) {
+        pal_poll_events(window);
+
 
         glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-        platform_swapbuffers(window);
+        swap_buffers(window);
     }
 
     /* None of this shit really matters, the OS can deal with this. */
+    /*
     glXMakeCurrent(window.display, None, NULL);
     glXDestroyContext(window.display, window.ctx);
     xcb_destroy_window(window.xcb_conn, window.window);
     xcb_disconnect(window.xcb_conn);
     XCloseDisplay(window.display);
+    */
     return 0;
 }
