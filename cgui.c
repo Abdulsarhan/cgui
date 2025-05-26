@@ -4,8 +4,11 @@
 #include <xcb/xcb.h>
 #include <X11/Xlib.h>
 #include <X11/Xlib-xcb.h>
+#include <glad/glad.h>
 #include <GL/gl.h>
 #include <GL/glx.h>
+#include "pal.h"
+
 // the idea is that layers contain a layout (or multiple layouts) and the layer specifies
 // how much space each layout takes up. and the layout contains the UI elements that the
 // user will see and/or will be interacting with (buttons, text, textboxes,etc...)
@@ -58,118 +61,101 @@ typedef struct layer {
     layout* layouts;
 }layer;
 
-void fatal(const char* string) {
-    printf("%s", string);
-}
-
-typedef struct pal_window {
-    Display *display;
-    xcb_connection_t *xcb_conn;
-    xcb_window_t window;
-    GLXContext ctx;
-    uint8_t window_should_close;
-}pal_window;
-
-pal_window platform_create_window() {
-    pal_window window = {0};
-    // 1. Connect to X11 and get the XCB connection
-    window.display = XOpenDisplay(NULL);
-    if (!window.display) fatal("Failed to open X display");
-
-    window.xcb_conn = XGetXCBConnection(window.display);
-    int default_screen = DefaultScreen(window.display);
-
-    // 2. Get XCB screen
-    const xcb_setup_t *setup = xcb_get_setup(window.xcb_conn);
-    xcb_screen_iterator_t iter = xcb_setup_roots_iterator(setup);
-    for (int i = 0; i < default_screen; ++i) xcb_screen_next(&iter);
-    xcb_screen_t *screen = iter.data;
-    // 3. Create XCB window
-    window.window = xcb_generate_id(window.xcb_conn);
-    uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-    uint32_t values[] = {
-        screen->black_pixel,
-        XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS
-    };
-
-    xcb_create_window(
-        window.xcb_conn,
-        XCB_COPY_FROM_PARENT,
-        window.window,
-        screen->root,
-        0, 0, 800, 600,
-        0,
-        XCB_WINDOW_CLASS_INPUT_OUTPUT,
-        screen->root_visual,
-        mask, values
-    );
-
-    xcb_map_window(window.xcb_conn, window.window);
-    xcb_flush(window.xcb_conn);
-    XVisualInfo vinfo_template;
-    int nitems;
-    vinfo_template.screen = default_screen;
-    XVisualInfo* vinfo = XGetVisualInfo(window.display, mask, &vinfo_template, &nitems);
-    // 4. Create OpenGL context using GLX
-    window.ctx = glXCreateContext(
-        window.display,
-        vinfo,
-        NULL,
-        GL_TRUE
-    );
-    if (!window.ctx) fatal("Failed to create GLX context");
-
-    // 5. Create X11 window from XCB window
-    return window;
-}
-
-void platform_makecurrent(pal_window window) {
-    glXMakeCurrent(window.display, window.window, window.ctx);
-}
-
-void platform_swapbuffers(pal_window window) {
-    glXSwapBuffers(window.display, window.window);
-}
-
-void make_context_current(pal_window window) {
-     platform_makecurrent(window);
-}
-
-void swap_buffers(pal_window window) {
-    platform_swapbuffers(window);
-}
-
-uint8_t pal_window_should_close(pal_window window) {
-    return window.window_should_close;
-}
-
-void platform_poll_events(pal_window window) {
-    xcb_generic_event_t *event;
-    while ((event = xcb_poll_for_event(window.xcb_conn))) {
-        switch (event->response_type & ~0x80) {
-            case XCB_KEY_PRESS:
-                free(event);
-                window.window_should_close = true;
-        }
-    }
-}
-
-void pal_poll_events(pal_window window) {
-    platform_poll_events(window);
-}
-
 int main() {
     pal_window window = platform_create_window();
+    window.window_should_close = false;
 
     make_context_current(window);
-    
+
+    if (!gladLoadGLLoader((GLADloadproc)gl_get_proc_address)) {
+        fprintf(stderr, "ERROR: Failed to intialize glad!\n");
+    }
+
+    unsigned int VAO, VBO, EBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    float vertices[] = {
+	0.15f,  0.15f, 0.0f,  // top right
+	0.15f, -0.15f, 0.0f,  // bottom right
+       -0.15f, -0.15f, 0.0f,  // bottom left
+       -0.15f,  0.15f, 0.0f   // top left
+    };
+    unsigned int indices[] = {
+	0, 1, 3, // first triangle
+	1, 2, 3 // second triangle
+    };
+
+    glViewport(0, 0, 1920, 1080);
+    glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+
+    /* VERTEX SHADER */
+    const char* vertexShaderSource = "#version 330 core\n"
+	    "layout (location = 0) in vec3 aPos;\n"
+	    "void main()\n"
+	    "{\n"
+	    " gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
+	    "}\0";
+
+    unsigned int vertexShader;
+    vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glCompileShader(vertexShader);
+    CheckCompilerErrors(vertexShader);
+
+    /* FRAGMENT SHADER */
+    const char* fragmentShaderSource = "#version 330 core\n"
+	    "out vec4 FragColor;\n"
+	    "void main()\n"
+	    "{\n"
+	    "FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);\n"
+	    "}\0";
+
+    unsigned int fragmentShader;
+    fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glCompileShader(fragmentShader);
+
+/* LINKING VERTEX AND FRAGMENT SHADER */
+    unsigned int shaderProgram;
+    shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    /* VBO */
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glUseProgram(shaderProgram);
+
+    /* EBO */
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+    /* VAO */
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
     while (!pal_window_should_close(window)) {
-        pal_poll_events(window);
+        pal_poll_events(&window);
 
+	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
-        glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        get_mouse_position(window);
         swap_buffers(window);
+
+        glClear(GL_COLOR_BUFFER_BIT);
     }
 
     /* None of this shit really matters, the OS can deal with this. */
