@@ -1,13 +1,13 @@
-#include <X11/Xutil.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <xcb/xcb.h>
-#include <X11/Xlib.h>
-#include <X11/Xlib-xcb.h>
+
 #include <glad/glad.h>
-#include <GL/gl.h>
-#include <GL/glx.h>
-#include "pal.h"
+
+#ifndef _WIN32
+#include "pal_linux.h"
+#else
+#include "pal_win32.h"
+#endif
 
 // the idea is that layers contain a layout (or multiple layouts) and the layer specifies
 // how much space each layout takes up. and the layout contains the UI elements that the
@@ -17,10 +17,18 @@
 #define true 1
 #define false 0
 
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 600
+
 typedef enum button_flags {
     is_hovering = 1,
     is_blank = 2,
 }button_flags;
+
+typedef enum conatiner_kinds {
+    HORIZONTAL_STACK,
+    VERTICAL_STACK,
+}conatiner_kinds;
 
 typedef struct vec2 {
     float x;
@@ -51,19 +59,15 @@ typedef struct text {
     button_flags flags;
 }text;
 
-typedef struct layout {
-    button* buttons;
-    textbox* textboxes;
-    text* text;
-}layout;
-
-typedef struct layer {
-    layout* layouts;
-}layer;
+typedef struct container {
+    vec2 container_size;
+    vec2 container_pos;
+    conatiner_kinds kind;
+}container;
 
 int main() {
-    pal_window window = platform_create_window();
-    window.window_should_close = false;
+    pal_window window = platform_create_window(SCREEN_WIDTH, SCREEN_HEIGHT);
+    s_window_should_not_close = false;
 
     make_context_current(window);
 

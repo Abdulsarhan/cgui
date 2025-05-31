@@ -1,5 +1,13 @@
-#ifndef PAL_H
-#define PAL_H
+#ifndef PAL_LINUX_H
+#define PAL_LINUX_H
+
+#include <X11/Xutil.h>
+#include <xcb/xcb.h>
+#include <X11/Xlib.h>
+#include <X11/Xlib-xcb.h>
+#include <glad/glad.h>
+#include <GL/gl.h>
+#include <GL/glx.h>
 
 typedef struct pal_window {
     Display *display;
@@ -9,7 +17,7 @@ typedef struct pal_window {
     uint8_t window_should_close;
 }pal_window;
 
-pal_window platform_create_window() {
+pal_window platform_create_window(int width, int height) {
     pal_window window = {0};
     // 1. Connect to X11 and get the XCB connection
     window.display = XOpenDisplay(NULL);
@@ -36,7 +44,7 @@ pal_window platform_create_window() {
         XCB_COPY_FROM_PARENT,
         window.window,
         screen->root,
-        0, 0, 800, 600,
+        0, 0, width, height,
         0,
         XCB_WINDOW_CLASS_INPUT_OUTPUT,
         screen->root_visual,
@@ -131,4 +139,4 @@ void platform_get_mouse_position(pal_window window) {
 void get_mouse_position(pal_window window) {
     platform_get_mouse_position(window);
 }
-#endif // PAL_H
+#endif // PAL_LINUX_H
